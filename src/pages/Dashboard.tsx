@@ -1,12 +1,14 @@
 import { useMemo } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { useIncome } from '@/hooks/useIncome';
 import { useExpense } from '@/hooks/useExpense';
+import { useTransaction } from '@/hooks/useTransaction';
 import { formatCurrency, calculateCashFlow, monthlyEquivalent } from '@/utils/finance';
 
 export default function Dashboard(): JSX.Element {
   const { incomes } = useIncome();
   const { expenses } = useExpense();
+  const { transactions } = useTransaction();
 
   const stats = useMemo(() => {
     const monthlyIncome = incomes
@@ -47,6 +49,37 @@ export default function Dashboard(): JSX.Element {
       };
     });
   }, [incomes, expenses]);
+
+  // Monthly breakdown from imported transactions
+  const monthlyBreakdown = useMemo(() => {
+    const monthMap = new Map<string, { income: number; expense: number }>();
+
+    transactions.forEach((tx) => {
+      // Extract year-month from date (YYYY-MM-DD format)
+      const monthKey = tx.date.substring(0, 7); // "2025-01", "2025-02", etc.
+
+      if (!monthMap.has(monthKey)) {
+        monthMap.set(monthKey, { income: 0, expense: 0 });
+      }
+
+      const month = monthMap.get(monthKey)!;
+      if (tx.type === 'income') {
+        month.income += tx.amount;
+      } else {
+        month.expense += tx.amount;
+      }
+    });
+
+    // Convert to array and sort by month
+    return Array.from(monthMap.entries())
+      .map(([month, { income, expense }]) => ({
+        month,
+        income,
+        expense,
+        cashFlow: income - expense,
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+  }, [transactions]);
 
   return (
     <div className="p-6">
@@ -129,6 +162,82 @@ export default function Dashboard(): JSX.Element {
           </div>
         </div>
       </div>
+
+      {/* Monthly Breakdown from Imported Transactions */}
+      {monthlyBreakdown.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-xl font-semibold mb-4">Monthly Breakdown (From Imported Data)</h2>
+          <div className="bg-white p-6 rounded-lg shadow">
+            {monthlyBreakdown.length === 0 ? (
+              <p className="text-gray-500">No transaction data available. Import a bank statement or financial statement to see monthly breakdown.</p>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={300}>
+                  <LineChart data={monthlyBreakdown}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="month"
+                      label={{ value: 'Month (YYYY-MM)', position: 'insideBottom', offset: -5 }}
+                    />
+                    <YAxis />
+                    <Tooltip formatter={(value) => formatCurrency(value as number)} />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="income"
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      name="Income"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="expense"
+                      stroke="#ef4444"
+                      strokeWidth={2}
+                      name="Expenses"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="cashFlow"
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      name="Cash Flow"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+                <div className="mt-6">
+                  <h3 className="text-lg font-semibold mb-3">Monthly Details</h3>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Month</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Income</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Expenses</th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cash Flow</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {monthlyBreakdown.map((month) => (
+                          <tr key={month.month} className="hover:bg-gray-50">
+                            <td className="px-6 py-4 text-sm font-medium text-gray-900">{month.month}</td>
+                            <td className="px-6 py-4 text-sm text-green-600 font-semibold">{formatCurrency(month.income)}</td>
+                            <td className="px-6 py-4 text-sm text-red-600 font-semibold">{formatCurrency(month.expense)}</td>
+                            <td className={`px-6 py-4 text-sm font-semibold ${month.cashFlow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {formatCurrency(month.cashFlow)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

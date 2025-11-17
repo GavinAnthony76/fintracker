@@ -7,7 +7,7 @@ import {
   validateIncomeExpenseRow,
   type ParsedCSVData,
 } from '@/services/csvParser';
-import { Income, Expense } from '@/types/models';
+import { Income, Expense, Transaction } from '@/types/models';
 
 interface ImportPreview {
   type: 'income-expense' | 'asset-liability' | 'unknown';
@@ -35,7 +35,7 @@ export default function ImportCenter(): JSX.Element {
   const [isProcessing, setIsProcessing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
-  const [importResult, setImportResult] = useState<{ incomeCount: number; expenseCount: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ incomeCount: number; expenseCount: number; transactionCount?: number } | null>(null);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -122,9 +122,12 @@ export default function ImportCenter(): JSX.Element {
     try {
       let incomeCount = 0;
       let expenseCount = 0;
+      let transactionCount = 0;
       const failedRows: string[] = [];
 
       if (preview.type === 'income-expense') {
+        const batchId = crypto.randomUUID();  // Create batch ID for linked imports
+
         for (const row of preview.validRows) {
           if (!selectedRows.has(row.index)) continue;
 
@@ -190,39 +193,63 @@ export default function ImportCenter(): JSX.Element {
 
             const isIncome = transactionType === 'income';
 
-            if (isIncome) {
-              const incomeRecord: Income = {
+            // Check if row has a transaction date - if so, create Transaction instead
+            const transactionDate = data['Transaction Date'] || data['Date'];
+            if (transactionDate && transactionDate.trim()) {
+              // Create Transaction record for dated imports
+              const txRecord: Transaction = {
                 id: crypto.randomUUID(),
-                name: data['Name'] || 'Imported Income',
+                date: transactionDate,  // Already in ISO format from parser
+                description: data['Name'] || 'Imported Transaction',
                 amount,
-                frequency: frequency as Exclude<any, 'daily'>,
+                type: isIncome ? 'income' : 'expense',
                 category: data['Category'] || 'Other',
-                startDate: data['Start Date'] || new Date().toISOString().split('T')[0],
-                endDate: data['End Date'] || undefined,
-                isActive: data['Status']?.toLowerCase() !== 'inactive',
-                notes: data['Notes'] || undefined,
+                account: data['Account'] || undefined,
+                source: 'import',
+                importBatchId: batchId,
+                notes: data['Notes'] || data['Month'] || undefined,
                 createdAt: now,
                 updatedAt: now,
               };
 
-              await db.incomes.add(incomeRecord);
-              incomeCount++;
+              await db.transactions.add(txRecord);
+              transactionCount++;
             } else {
-              const expenseRecord: Expense = {
-                id: crypto.randomUUID(),
-                name: data['Name'] || 'Imported Expense',
-                amount,
-                frequency: frequency as any,
-                category: data['Category'] || 'Other',
-                dueDate: data['Due Date'] || undefined,
-                isActive: data['Status']?.toLowerCase() !== 'inactive',
-                notes: data['Notes'] || undefined,
-                createdAt: now,
-                updatedAt: now,
-              };
+              // Create Income/Expense record for non-dated imports (recurring items)
+              if (isIncome) {
+                const incomeRecord: Income = {
+                  id: crypto.randomUUID(),
+                  name: data['Name'] || 'Imported Income',
+                  amount,
+                  frequency: frequency as Exclude<any, 'daily'>,
+                  category: data['Category'] || 'Other',
+                  startDate: data['Start Date'] || new Date().toISOString().split('T')[0],
+                  endDate: data['End Date'] || undefined,
+                  isActive: data['Status']?.toLowerCase() !== 'inactive',
+                  notes: data['Notes'] || undefined,
+                  createdAt: now,
+                  updatedAt: now,
+                };
 
-              await db.expenses.add(expenseRecord);
-              expenseCount++;
+                await db.incomes.add(incomeRecord);
+                incomeCount++;
+              } else {
+                const expenseRecord: Expense = {
+                  id: crypto.randomUUID(),
+                  name: data['Name'] || 'Imported Expense',
+                  amount,
+                  frequency: frequency as any,
+                  category: data['Category'] || 'Other',
+                  dueDate: data['Due Date'] || undefined,
+                  isActive: data['Status']?.toLowerCase() !== 'inactive',
+                  notes: data['Notes'] || undefined,
+                  createdAt: now,
+                  updatedAt: now,
+                };
+
+                await db.expenses.add(expenseRecord);
+                expenseCount++;
+              }
             }
           } catch (error) {
             console.error(`Failed to import row ${row.index}:`, error);
@@ -233,15 +260,21 @@ export default function ImportCenter(): JSX.Element {
         }
       }
 
-      const totalImported = incomeCount + expenseCount;
+      const totalImported = incomeCount + expenseCount + transactionCount;
       if (totalImported === 0) {
         setMessage({
           type: 'error',
           text: `No records were imported. ${failedRows.length > 0 ? 'Errors: ' + failedRows.join('; ') : ''}`
         });
       } else {
-        setImportResult({ incomeCount, expenseCount });
-        let successMsg = `✅ Successfully imported ${totalImported} records! (${incomeCount} income, ${expenseCount} expense)`;
+        setImportResult({ incomeCount, expenseCount, transactionCount });
+        let successMsg = `✅ Successfully imported ${totalImported} records!`;
+        if (incomeCount > 0 || expenseCount > 0) {
+          successMsg += ` (${incomeCount} income, ${expenseCount} expense)`;
+        }
+        if (transactionCount > 0) {
+          successMsg += ` + ${transactionCount} transaction(s) with dates`;
+        }
         if (failedRows.length > 0) {
           successMsg += `\n⚠️ Failed to import ${failedRows.length} rows`;
         }
@@ -306,30 +339,40 @@ export default function ImportCenter(): JSX.Element {
             <div className="flex-1">
               <h2 className="text-2xl font-bold text-green-900 mb-4">Import Successful!</h2>
               <p className="text-green-800 mb-6">
-                {importResult.incomeCount + importResult.expenseCount} records imported and saved!
+                {(importResult.incomeCount || 0) + (importResult.expenseCount || 0) + (importResult.transactionCount || 0)} records imported and saved!
                 <br/>
-                <strong>{importResult.incomeCount} income</strong> and <strong>{importResult.expenseCount} expense</strong> items are now in your app.
+                {(importResult.incomeCount || 0) > 0 && <><strong>{importResult.incomeCount} income</strong> and </>}
+                {(importResult.expenseCount || 0) > 0 && <><strong>{importResult.expenseCount} expense</strong> items</>}
+                {(importResult.transactionCount || 0) > 0 && <><br/><strong>{importResult.transactionCount} dated transaction(s)</strong> with specific dates</>}
               </p>
               <div className="grid grid-cols-2 gap-4">
-                {importResult.incomeCount > 0 && (
+                {(importResult.incomeCount || 0) > 0 && (
                   <a
                     href="/income"
                     className="inline-block px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-center transition"
                   >
-                    📊 View {importResult.incomeCount} Income{importResult.incomeCount !== 1 ? 's' : ''}
+                    📊 View {importResult.incomeCount} Income{(importResult.incomeCount || 0) !== 1 ? 's' : ''}
                   </a>
                 )}
-                {importResult.expenseCount > 0 && (
+                {(importResult.expenseCount || 0) > 0 && (
                   <a
                     href="/expenses"
                     className="inline-block px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-center transition"
                   >
-                    💸 View {importResult.expenseCount} Expense{importResult.expenseCount !== 1 ? 's' : ''}
+                    💸 View {importResult.expenseCount} Expense{(importResult.expenseCount || 0) !== 1 ? 's' : ''}
+                  </a>
+                )}
+                {(importResult.transactionCount || 0) > 0 && (
+                  <a
+                    href="/transactions"
+                    className="inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-center transition"
+                  >
+                    📅 View {importResult.transactionCount} Transaction{(importResult.transactionCount || 0) !== 1 ? 's' : ''}
                   </a>
                 )}
               </div>
               <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
-                💡 Tip: Your Dashboard will now show the imported income and expenses in the monthly summaries!
+                💡 Tip: Your Dashboard and Transactions page will now show the imported data with dates preserved!
               </div>
               <button
                 onClick={() => {

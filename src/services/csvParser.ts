@@ -150,13 +150,71 @@ function parseBankStatementCSV(
 }
 
 /**
+ * Extract month from header string (e.g., "Jan 2025", "February 2024", "Jan")
+ */
+function extractMonthDate(headerStr: string): Date | null {
+  const trimmed = headerStr.trim();
+
+  // Try parsing common date formats
+  const monthNames: Record<string, number> = {
+    'january': 0, 'jan': 0,
+    'february': 1, 'feb': 1,
+    'march': 2, 'mar': 2,
+    'april': 3, 'apr': 3,
+    'may': 4,
+    'june': 5, 'jun': 5,
+    'july': 6, 'jul': 6,
+    'august': 7, 'aug': 7,
+    'september': 8, 'sep': 8, 'sept': 8,
+    'october': 9, 'oct': 9,
+    'november': 10, 'nov': 10,
+    'december': 11, 'dec': 11,
+  };
+
+  const parts = trimmed.toLowerCase().split(/[\s\-\/]+/);
+  if (parts.length < 1) return null;
+
+  const monthName = parts[0];
+  const monthIndex = monthNames[monthName];
+  if (monthIndex === undefined) return null;
+
+  // Try to find year (default to current year if not found)
+  let year = new Date().getFullYear();
+  for (const part of parts) {
+    const yearMatch = part.match(/\d{4}/);
+    if (yearMatch) {
+      year = parseInt(yearMatch[0], 10);
+      break;
+    }
+  }
+
+  // Create date for the first day of the month
+  return new Date(year, monthIndex, 1);
+}
+
+/**
  * Parse financial statement CSV format (Account Name with monthly columns)
+ * Now extracts individual monthly transactions instead of just totals
  */
 function parseFinancialStatementCSV(lines: string[]): ParsedCSVData {
   const headers = parseCSVLine(lines[0]).map((h) => h.trim());
 
-  // Find total column
-  const totalColumnIndex = headers.findIndex((h) => h.toLowerCase() === 'total');
+  // Identify month columns and total column
+  const monthColumns: Array<{ index: number; header: string; date: Date }> = [];
+  let totalColumnIndex = -1;
+
+  headers.forEach((header, index) => {
+    const lowerHeader = header.toLowerCase();
+    if (lowerHeader === 'total') {
+      totalColumnIndex = index;
+    } else if (lowerHeader !== 'account name' && lowerHeader !== 'name') {
+      // Try to extract month from header
+      const monthDate = extractMonthDate(header);
+      if (monthDate) {
+        monthColumns.push({ index, header, date: monthDate });
+      }
+    }
+  });
 
   const rows: ParsedRow[] = [];
   const rawData: string[][] = [headers];
@@ -194,39 +252,70 @@ function parseFinancialStatementCSV(lines: string[]): ParsedCSVData {
     // Skip rows without a type
     if (!currentType) continue;
 
-    // Get amount and clean it (remove commas, parentheses for negative values)
-    const rawAmount = values[totalColumnIndex] || '';
-    // Remove commas but preserve the minus sign for negative numbers
-    let cleanAmount = rawAmount.replace(/[,$]/g, '').trim();
+    // Extract monthly values if we have identified month columns
+    if (monthColumns.length > 0) {
+      for (const monthCol of monthColumns) {
+        const rawAmount = values[monthCol.index] || '';
+        // Remove commas but preserve the minus sign for negative numbers
+        let cleanAmount = rawAmount.replace(/[,$]/g, '').trim();
 
-    // Handle parentheses as negative numbers (accounting notation)
-    if (cleanAmount.startsWith('(') && cleanAmount.endsWith(')')) {
-      cleanAmount = '-' + cleanAmount.slice(1, -1);
+        // Handle parentheses as negative numbers (accounting notation)
+        if (cleanAmount.startsWith('(') && cleanAmount.endsWith(')')) {
+          cleanAmount = '-' + cleanAmount.slice(1, -1);
+        }
+
+        // Skip if empty or non-numeric
+        if (!cleanAmount) continue;
+        const parsedAmount = parseFloat(cleanAmount);
+        if (isNaN(parsedAmount) || parsedAmount === 0) continue;
+
+        // Create row for this month's transaction
+        const row: ParsedRow = {
+          Type: currentType === 'income' ? 'Income' : 'Expense',
+          Name: trimmedName,
+          Amount: cleanAmount,
+          Frequency: 'one-time',  // Monthly statement entries are specific dates, not recurring
+          Category: 'Other',
+          Status: 'Active',
+          'Transaction Date': monthCol.date.toISOString().split('T')[0],  // ISO date format
+          'Month': monthCol.header,  // For reference
+        };
+
+        rows.push(row);
+      }
+    } else {
+      // Fallback to total column if no month columns found
+      const rawAmount = values[totalColumnIndex] || '';
+      let cleanAmount = rawAmount.replace(/[,$]/g, '').trim();
+
+      if (cleanAmount.startsWith('(') && cleanAmount.endsWith(')')) {
+        cleanAmount = '-' + cleanAmount.slice(1, -1);
+      }
+
+      const parsedAmount = parseFloat(cleanAmount);
+      if (!cleanAmount || isNaN(parsedAmount)) {
+        continue;
+      }
+
+      const row: ParsedRow = {
+        Type: currentType === 'income' ? 'Income' : 'Expense',
+        Name: trimmedName,
+        Amount: cleanAmount,
+        Frequency: 'monthly',
+        Category: 'Other',
+        Status: 'Active',
+      };
+
+      rows.push(row);
     }
 
-    // Validate numeric amount
-    const parsedAmount = parseFloat(cleanAmount);
-    if (!cleanAmount || isNaN(parsedAmount)) {
-      continue;
-    }
-
-    // Create row with consistent format
-    // Negative amounts will be handled by the import handler to flip the type
-    const row: ParsedRow = {
-      Type: currentType === 'income' ? 'Income' : 'Expense',
-      Name: trimmedName,
-      Amount: cleanAmount,  // Include negative sign if present
-      Frequency: 'monthly',
-      Category: 'Other',
-      Status: 'Active',
-    };
-
-    rows.push(row);
     rawData.push(values);
   }
 
   return {
-    headers: ['Type', 'Name', 'Amount', 'Frequency', 'Category', 'Status'],
+    headers: monthColumns.length > 0
+      ? ['Type', 'Name', 'Amount', 'Frequency', 'Category', 'Status', 'Transaction Date', 'Month']
+      : ['Type', 'Name', 'Amount', 'Frequency', 'Category', 'Status'],
     rows,
     rawData,
     format: 'financial-statement',
