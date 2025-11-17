@@ -41,13 +41,14 @@ export function useIncome(): UseIncomeResult {
           updatedAt: now,
         };
         await db.incomes.add(newIncome);
-        setIncomes((prev) => [...prev, newIncome]);
+        // Reload all incomes to ensure UI is in sync
+        await loadIncomes();
       } catch (error) {
         console.error('Failed to add income:', error);
         throw error;
       }
     },
-    []
+    [loadIncomes]
   );
 
   const updateIncome = useCallback(async (id: string, updates: Partial<Income>) => {

@@ -41,13 +41,14 @@ export function useExpense(): UseExpenseResult {
           updatedAt: now,
         };
         await db.expenses.add(newExpense);
-        setExpenses((prev) => [...prev, newExpense]);
+        // Reload all expenses to ensure UI is in sync
+        await loadExpenses();
       } catch (error) {
         console.error('Failed to add expense:', error);
         throw error;
       }
     },
-    []
+    [loadExpenses]
   );
 
   const updateExpense = useCallback(async (id: string, updates: Partial<Expense>) => {

@@ -122,48 +122,102 @@ export default function ImportCenter(): JSX.Element {
     try {
       let incomeCount = 0;
       let expenseCount = 0;
+      const failedRows: string[] = [];
 
       if (preview.type === 'income-expense') {
         for (const row of preview.validRows) {
           if (!selectedRows.has(row.index)) continue;
 
           const data = row.data;
-          const isIncome = data['Type'] === 'Income';
-
-          const newRecord = {
-            name: data['Name'],
-            amount: parseFloat(data['Amount']),
-            frequency: data['Frequency'].toLowerCase(),
-            category: data['Category'] || (isIncome ? 'Other' : 'Other'),
-            isActive: data['Status'] !== 'Inactive',
-            notes: data['Notes'] || undefined,
-            ...(isIncome ? { startDate: data['Start Date'] || new Date().toISOString().split('T')[0] } : {}),
-            ...(isIncome ? { endDate: data['End Date'] || undefined } : {}),
-            ...(!isIncome ? { dueDate: data['Start Date'] || undefined } : {}),
-          };
+          const isIncome = data['Type']?.toLowerCase() === 'income';
+          const now = new Date().toISOString();
 
           try {
+            // Parse amount - handle various formats
+            const amount = parseFloat(
+              data['Amount']?.toString().replace(/[$,()]/g, '') || '0'
+            );
+
+            if (isNaN(amount) || amount <= 0) {
+              failedRows.push(`Row ${row.index + 1}: Invalid amount "${data['Amount']}"`);
+              continue;
+            }
+
+            // Normalize frequency
+            const frequencyStr = data['Frequency']?.toLowerCase().trim() || 'one-time';
+            const validFrequencies = [
+              'daily', 'weekly', 'bi-weekly', 'semi-monthly',
+              'monthly', 'quarterly', 'annually', 'one-time'
+            ];
+            const frequency = validFrequencies.includes(frequencyStr)
+              ? (frequencyStr as any)
+              : 'one-time';
+
             if (isIncome) {
-              await db.incomes.add(newRecord as Income);
+              const incomeRecord: Income = {
+                id: crypto.randomUUID(),
+                name: data['Name'] || 'Imported Income',
+                amount,
+                frequency: frequency as Exclude<any, 'daily'>,
+                category: data['Category'] || 'Other',
+                startDate: data['Start Date'] || new Date().toISOString().split('T')[0],
+                endDate: data['End Date'] || undefined,
+                isActive: data['Status']?.toLowerCase() !== 'inactive',
+                notes: data['Notes'] || undefined,
+                createdAt: now,
+                updatedAt: now,
+              };
+
+              await db.incomes.add(incomeRecord);
               incomeCount++;
             } else {
-              await db.expenses.add(newRecord as Expense);
+              const expenseRecord: Expense = {
+                id: crypto.randomUUID(),
+                name: data['Name'] || 'Imported Expense',
+                amount,
+                frequency: frequency as any,
+                category: data['Category'] || 'Other',
+                dueDate: data['Due Date'] || undefined,
+                isActive: data['Status']?.toLowerCase() !== 'inactive',
+                notes: data['Notes'] || undefined,
+                createdAt: now,
+                updatedAt: now,
+              };
+
+              await db.expenses.add(expenseRecord);
               expenseCount++;
             }
           } catch (error) {
             console.error(`Failed to import row ${row.index}:`, error);
+            failedRows.push(
+              `Row ${row.index + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`
+            );
           }
         }
       }
 
       const totalImported = incomeCount + expenseCount;
-      setImportResult({ incomeCount, expenseCount });
-      setMessage({ type: 'success', text: `Successfully imported ${totalImported} records!` });
-      setPreview(null);
-      setSelectedRows(new Set());
+      if (totalImported === 0) {
+        setMessage({
+          type: 'error',
+          text: `No records were imported. ${failedRows.length > 0 ? 'Errors: ' + failedRows.join('; ') : ''}`
+        });
+      } else {
+        setImportResult({ incomeCount, expenseCount });
+        let successMsg = `✅ Successfully imported ${totalImported} records! (${incomeCount} income, ${expenseCount} expense)`;
+        if (failedRows.length > 0) {
+          successMsg += `\n⚠️ Failed to import ${failedRows.length} rows`;
+        }
+        setMessage({ type: 'success', text: successMsg });
+        setPreview(null);
+        setSelectedRows(new Set());
+      }
     } catch (error) {
       console.error('Import error:', error);
-      setMessage({ type: 'error', text: 'Failed to import data. Please try again.' });
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Failed to import data. Please try again.'
+      });
     } finally {
       setIsProcessing(false);
     }
@@ -215,25 +269,30 @@ export default function ImportCenter(): JSX.Element {
             <div className="flex-1">
               <h2 className="text-2xl font-bold text-green-900 mb-4">Import Successful!</h2>
               <p className="text-green-800 mb-6">
-                Your financial data has been imported and saved to the database. Click below to view your imported data.
+                {importResult.incomeCount + importResult.expenseCount} records imported and saved!
+                <br/>
+                <strong>{importResult.incomeCount} income</strong> and <strong>{importResult.expenseCount} expense</strong> items are now in your app.
               </p>
               <div className="grid grid-cols-2 gap-4">
                 {importResult.incomeCount > 0 && (
                   <a
                     href="/income"
-                    className="inline-block px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-center"
+                    className="inline-block px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-center transition"
                   >
-                    📊 View {importResult.incomeCount} Income Source{importResult.incomeCount !== 1 ? 's' : ''}
+                    📊 View {importResult.incomeCount} Income{importResult.incomeCount !== 1 ? 's' : ''}
                   </a>
                 )}
                 {importResult.expenseCount > 0 && (
                   <a
                     href="/expenses"
-                    className="inline-block px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-center"
+                    className="inline-block px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium text-center transition"
                   >
                     💸 View {importResult.expenseCount} Expense{importResult.expenseCount !== 1 ? 's' : ''}
                   </a>
                 )}
+              </div>
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+                💡 Tip: Your Dashboard will now show the imported income and expenses in the monthly summaries!
               </div>
               <button
                 onClick={() => {
