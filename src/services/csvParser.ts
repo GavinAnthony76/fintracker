@@ -341,15 +341,18 @@ export function validateIncomeExpenseRow(row: ParsedRow): { valid: boolean; erro
     errors.push('Description/Name is required');
   }
 
-  // Amount validation - be flexible with format
+  // Amount validation - be flexible with format (allow negative for bank statements)
   let amountValue = 0;
   if (row['Amount']) {
     const cleaned = row['Amount'].toString().replace(/[$,()]/g, '');
     amountValue = parseFloat(cleaned);
     if (isNaN(amountValue)) {
       errors.push(`Amount must be a valid number (got: "${row['Amount']}")`);
-    } else if (amountValue < 0) {
-      errors.push('Amount must be positive');
+    }
+    // Allow negative amounts - bank statements use negatives for withdrawals/expenses
+    // These will be converted to positive in the import handler and type will be flipped
+    if (amountValue === 0) {
+      errors.push('Amount cannot be zero');
     }
   } else if (row['Debit'] || row['Credit']) {
     // Debit/credit format is OK
