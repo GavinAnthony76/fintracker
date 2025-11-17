@@ -36,6 +36,8 @@ export default function ImportCenter(): JSX.Element {
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [importResult, setImportResult] = useState<{ incomeCount: number; expenseCount: number; transactionCount?: number } | null>(null);
+  const [dateOverrides, setDateOverrides] = useState<Record<number, string>>({}); // row index -> ISO date string
+  const [globalDateOverride, setGlobalDateOverride] = useState<string | null>(null); // for applying one date to all rows
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = event.target.files?.[0];
@@ -194,7 +196,22 @@ export default function ImportCenter(): JSX.Element {
             const isIncome = transactionType === 'income';
 
             // Check if row has a transaction date - if so, create Transaction instead
-            const transactionDate = data['Transaction Date'] || data['Date'];
+            let transactionDate = data['Transaction Date'] || data['Date'];
+
+            // Check for date override
+            const dateOverride = dateOverrides[row.index];
+            let dateConfidenceScore = 80; // default confidence for auto-detected dates
+
+            if (dateOverride) {
+              // User explicitly set a date
+              transactionDate = dateOverride;
+              dateConfidenceScore = 100; // user-confirmed date is highly confident
+            } else if (globalDateOverride && !transactionDate) {
+              // Use global date if no individual date detected
+              transactionDate = globalDateOverride;
+              dateConfidenceScore = 70; // bulk assignment is less certain
+            }
+
             if (transactionDate && transactionDate.trim()) {
               // Create Transaction record for dated imports
               const txRecord: Transaction = {
@@ -210,6 +227,7 @@ export default function ImportCenter(): JSX.Element {
                 notes: data['Notes'] || data['Month'] || undefined,
                 createdAt: now,
                 updatedAt: now,
+                dateConfidence: dateConfidenceScore,
               };
 
               await db.transactions.add(txRecord);
@@ -494,6 +512,29 @@ export default function ImportCenter(): JSX.Element {
           {preview.validRows.length > 0 && (
             <div className="p-6">
               <h3 className="text-lg font-semibold mb-4">Valid Records</h3>
+
+              {/* Global Date Override */}
+              {(preview.data.headers.includes('Transaction Date') || preview.data.headers.includes('Date')) && (
+                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    ⏳ Apply Same Date to All Records (Optional)
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="date"
+                      value={globalDateOverride || ''}
+                      onChange={(e) => setGlobalDateOverride(e.target.value || null)}
+                      className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                    <span className="text-sm text-gray-600">
+                      {globalDateOverride
+                        ? `This will apply to all rows without detected dates. Individual date adjustments below will override this.`
+                        : 'Leave empty to use auto-detected dates per row.'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="overflow-x-auto border rounded-lg">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
@@ -511,6 +552,11 @@ export default function ImportCenter(): JSX.Element {
                           {header}
                         </th>
                       ))}
+                      {(preview.data.headers.includes('Transaction Date') || preview.data.headers.includes('Date')) && (
+                        <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700 bg-blue-50">
+                          📅 Adjust Date (Optional)
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
@@ -529,6 +575,21 @@ export default function ImportCenter(): JSX.Element {
                             {row.data[header] || '-'}
                           </td>
                         ))}
+                        {(preview.data.headers.includes('Transaction Date') || preview.data.headers.includes('Date')) && (
+                          <td className="px-4 py-3 text-sm bg-blue-50">
+                            <input
+                              type="date"
+                              value={dateOverrides[row.index] || row.data['Transaction Date'] || row.data['Date'] || ''}
+                              onChange={(e) => {
+                                setDateOverrides({
+                                  ...dateOverrides,
+                                  [row.index]: e.target.value,
+                                });
+                              }}
+                              className="px-2 py-1 border border-gray-300 rounded text-sm"
+                            />
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

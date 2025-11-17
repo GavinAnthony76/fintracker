@@ -54,6 +54,7 @@ export interface Transaction {
   confidenceScore?: number;
   recurring?: boolean;
   linkedAssetId?: string;
+  dateConfidence?: number; // 0-100, how certain we are about the date
 }
 
 export type AssetType = 'cash' | 'investment' | 'property' | 'vehicle' | 'other';
