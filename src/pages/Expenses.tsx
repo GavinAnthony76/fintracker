@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import ExpenseForm from '@/components/forms/ExpenseForm';
 import { useExpense } from '@/hooks/useExpense';
+import { useIncome } from '@/hooks/useIncome';
 import type { ExpenseFormData } from '@/services/validation';
 import { formatCurrency } from '@/utils/finance';
+import { db } from '@/db/dexie';
+import type { Income, Expense } from '@/types/models';
 
 export default function Expenses(): JSX.Element {
   const { expenses, addExpense, updateExpense, deleteExpense } = useExpense();
+  const { addIncome } = useIncome();
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,6 +56,36 @@ export default function Expenses(): JSX.Element {
     } catch (error) {
       console.error('Failed to delete expense:', error);
       alert('Failed to delete expense');
+    }
+  };
+
+  const handleMoveToIncome = async (expenseId: string): Promise<void> => {
+    if (!window.confirm('Move this item to Income? It will be removed from Expenses.')) return;
+    try {
+      const expense = expenses.find(e => e.id === expenseId);
+      if (!expense) return;
+
+      // Create income record from expense
+      const incomeRecord: Income = {
+        id: crypto.randomUUID(),
+        name: expense.name,
+        amount: expense.amount,
+        frequency: expense.frequency as any,
+        category: expense.category,
+        startDate: new Date().toISOString().split('T')[0],
+        isActive: expense.isActive,
+        notes: expense.notes,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Add to income and delete from expenses
+      await db.incomes.add(incomeRecord);
+      await deleteExpense(expenseId);
+      alert('✅ Item moved to Income!');
+    } catch (error) {
+      console.error('Failed to move to income:', error);
+      alert('Failed to move item to income');
     }
   };
 
@@ -161,6 +195,13 @@ export default function Expenses(): JSX.Element {
                             className="text-blue-600 hover:text-blue-900"
                           >
                             Edit
+                          </button>
+                          <button
+                            onClick={() => handleMoveToIncome(expense.id)}
+                            className="text-green-600 hover:text-green-900"
+                            title="Move this item to Income"
+                          >
+                            → Income
                           </button>
                           <button
                             onClick={() => handleDeleteExpense(expense.id)}

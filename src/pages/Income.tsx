@@ -1,11 +1,15 @@
 import { useState } from 'react';
 import IncomeForm from '@/components/forms/IncomeForm';
 import { useIncome } from '@/hooks/useIncome';
+import { useExpense } from '@/hooks/useExpense';
 import type { IncomeFormData } from '@/services/validation';
 import { formatCurrency } from '@/utils/finance';
+import { db } from '@/db/dexie';
+import type { Income, Expense } from '@/types/models';
 
 export default function Income(): JSX.Element {
   const { incomes, addIncome, updateIncome, deleteIncome } = useIncome();
+  const { deleteExpense } = useExpense();
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,6 +56,35 @@ export default function Income(): JSX.Element {
     } catch (error) {
       console.error('Failed to delete income:', error);
       alert('Failed to delete income');
+    }
+  };
+
+  const handleMoveToExpense = async (incomeId: string): Promise<void> => {
+    if (!window.confirm('Move this item to Expenses? It will be removed from Income.')) return;
+    try {
+      const income = incomes.find(i => i.id === incomeId);
+      if (!income) return;
+
+      // Create expense record from income
+      const expenseRecord: Expense = {
+        id: crypto.randomUUID(),
+        name: income.name,
+        amount: income.amount,
+        frequency: income.frequency as any,
+        category: income.category,
+        isActive: income.isActive,
+        notes: income.notes,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Add to expenses and delete from income
+      await db.expenses.add(expenseRecord);
+      await deleteIncome(incomeId);
+      alert('✅ Item moved to Expenses!');
+    } catch (error) {
+      console.error('Failed to move to expense:', error);
+      alert('Failed to move item to expenses');
     }
   };
 
@@ -161,6 +194,13 @@ export default function Income(): JSX.Element {
                             className="text-blue-600 hover:text-blue-900"
                           >
                             Edit
+                          </button>
+                          <button
+                            onClick={() => handleMoveToExpense(income.id)}
+                            className="text-orange-600 hover:text-orange-900"
+                            title="Move this item to Expenses"
+                          >
+                            → Expense
                           </button>
                           <button
                             onClick={() => handleDeleteIncome(income.id)}

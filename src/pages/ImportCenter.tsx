@@ -155,6 +155,29 @@ export default function ImportCenter(): JSX.Element {
               continue;
             }
 
+            // Check category and name for income indicators
+            // This overrides the Type field if strong keywords are found
+            const nameCategory = `${data['Name'] || ''} ${data['Category'] || ''}`.toLowerCase();
+            const incomeKeywords = [
+              'income', 'paycheck', 'salary', 'wage', 'bonus', 'dividend',
+              'interest', 'refund', 'reimbursement', 'revenue', 'commission',
+              'royalty', 'gift', 'grant', 'payment in', 'deposit'
+            ];
+            const expenseKeywords = [
+              'expense', 'cost', 'fee', 'rent', 'utility', 'gas', 'electricity',
+              'water', 'phone', 'internet', 'insurance', 'mortgage', 'loan',
+              'payment out', 'withdrawal'
+            ];
+
+            // Check for strong income indicators
+            if (incomeKeywords.some(keyword => nameCategory.includes(keyword))) {
+              transactionType = 'income';
+            }
+            // Check for strong expense indicators (only if not already marked as income)
+            else if (expenseKeywords.some(keyword => nameCategory.includes(keyword))) {
+              transactionType = 'expense';
+            }
+
             // Normalize frequency
             const frequencyStr = data['Frequency']?.toLowerCase().trim() || 'one-time';
             const validFrequencies = [
