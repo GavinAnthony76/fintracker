@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /s \"C:\\Users\\gavin\\source\\repos\\APPS\\Ftracker\\fintracker\\src\" /b)",
+      "Bash(findstr:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(node test-parser.js:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
