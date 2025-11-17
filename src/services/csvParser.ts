@@ -196,18 +196,26 @@ function parseFinancialStatementCSV(lines: string[]): ParsedCSVData {
 
     // Get amount and clean it (remove commas, parentheses for negative values)
     const rawAmount = values[totalColumnIndex] || '';
-    const cleanAmount = rawAmount.replace(/[,$()]/g, '');
+    // Remove commas but preserve the minus sign for negative numbers
+    let cleanAmount = rawAmount.replace(/[,$]/g, '').trim();
 
-    // Only add rows with valid numeric amounts
-    if (!cleanAmount || isNaN(parseFloat(cleanAmount))) {
+    // Handle parentheses as negative numbers (accounting notation)
+    if (cleanAmount.startsWith('(') && cleanAmount.endsWith(')')) {
+      cleanAmount = '-' + cleanAmount.slice(1, -1);
+    }
+
+    // Validate numeric amount
+    const parsedAmount = parseFloat(cleanAmount);
+    if (!cleanAmount || isNaN(parsedAmount)) {
       continue;
     }
 
     // Create row with consistent format
+    // Negative amounts will be handled by the import handler to flip the type
     const row: ParsedRow = {
       Type: currentType === 'income' ? 'Income' : 'Expense',
       Name: trimmedName,
-      Amount: cleanAmount,
+      Amount: cleanAmount,  // Include negative sign if present
       Frequency: 'monthly',
       Category: 'Other',
       Status: 'Active',

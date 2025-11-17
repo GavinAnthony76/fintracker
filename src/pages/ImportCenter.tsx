@@ -129,17 +129,29 @@ export default function ImportCenter(): JSX.Element {
           if (!selectedRows.has(row.index)) continue;
 
           const data = row.data;
-          const isIncome = data['Type']?.toLowerCase() === 'income';
+          let transactionType = data['Type']?.toLowerCase() || 'expense';
           const now = new Date().toISOString();
 
           try {
-            // Parse amount - handle various formats
-            const amount = parseFloat(
-              data['Amount']?.toString().replace(/[$,()]/g, '') || '0'
-            );
+            // Parse amount - handle various formats (including negative amounts)
+            const amountStr = data['Amount']?.toString().replace(/[$,]/g, '') || '0';
+            let amount = parseFloat(amountStr);
 
-            if (isNaN(amount) || amount <= 0) {
+            if (isNaN(amount)) {
               failedRows.push(`Row ${row.index + 1}: Invalid amount "${data['Amount']}"`);
+              continue;
+            }
+
+            // Handle negative amounts - they flip the transaction type
+            // -$100 expense becomes $100 income, and vice versa
+            if (amount < 0) {
+              amount = Math.abs(amount);
+              // Flip the type for negative amounts
+              transactionType = transactionType === 'income' ? 'expense' : 'income';
+            }
+
+            // Skip if amount is 0 after processing
+            if (amount === 0) {
               continue;
             }
 
@@ -152,6 +164,8 @@ export default function ImportCenter(): JSX.Element {
             const frequency = validFrequencies.includes(frequencyStr)
               ? (frequencyStr as any)
               : 'one-time';
+
+            const isIncome = transactionType === 'income';
 
             if (isIncome) {
               const incomeRecord: Income = {
